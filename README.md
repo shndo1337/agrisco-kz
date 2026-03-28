@@ -129,7 +129,6 @@ venv\Scripts\activate        # Windows
 
 # 3. Установка зависимостей
 pip install -r requirements.txt
-pip install matplotlib
 
 # 4. Положить датасет в data/raw/
 
