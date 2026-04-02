@@ -1,5 +1,5 @@
 """
-AgriScore KZ — Streamlit Dashboard
+AgriScore KZ — Streamlit Dashboard v2
 Запуск: streamlit run app/dashboard.py
 """
 import streamlit as st
@@ -9,6 +9,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 import sys
+import io
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -25,15 +26,39 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .score-high { color: #22c55e; font-weight: bold; font-size: 1.2em; }
-    .score-mid  { color: #f59e0b; font-weight: bold; font-size: 1.2em; }
-    .score-low  { color: #ef4444; font-weight: bold; font-size: 1.2em; }
-    .metric-card {
-        background: #f8fafc;
-        border-radius: 12px;
-        padding: 1.2rem;
-        text-align: center;
-        border: 1px solid #e2e8f0;
+    .block-container { padding-top: 4rem; }
+    div[data-testid="stMetric"] {
+        background: linear-gradient(135deg, #0f1923 0%, #1a2836 100%);
+        border: 1px solid #2d4a5c;
+        border-radius: 10px;
+        padding: 12px 16px;
+    }
+    /* Tabs as visible buttons */
+    button[data-baseweb="tab"] {
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        padding: 10px 20px !important;
+        border: 1px solid #4a90d9 !important;
+        border-radius: 8px !important;
+        margin-right: 6px !important;
+        background: #1a2836 !important;
+        color: #e0e0e0 !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background: #3b82f6 !important;
+        color: #ffffff !important;
+        border-color: #3b82f6 !important;
+    }
+    div[data-baseweb="tab-list"] {
+        gap: 6px;
+        overflow-x: auto;
+    }
+    /* Hide the default tab underline */
+    div[data-baseweb="tab-highlight"] {
+        display: none !important;
+    }
+    div[data-baseweb="tab-border"] {
+        display: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -42,22 +67,22 @@ st.markdown("""
 # ─── Load data & model ───
 @st.cache_resource
 def init():
-    model, encoders = load_model()
+    models, encoders, oblast_stats = load_model()
     df = load_and_clean()
-    scored, shap_vals, X = score_applicants(df, model, encoders)
-    return model, encoders, scored, shap_vals, X
+    scored, shap_vals, X = score_applicants(df, models, encoders, oblast_stats)
+    return models, encoders, oblast_stats, scored, shap_vals, X
 
 
 try:
-    model, encoders, df_scored, shap_values, X_matrix = init()
+    models, encoders, oblast_stats, df_scored, shap_values, X_matrix = init()
 except Exception as e:
-    st.error(f"Сначала обучите модель: `py train.py`\n\nОшибка: {e}")
+    st.error(f"Сначала обучите модель: `python train.py`\n\nОшибка: {e}")
     st.stop()
 
 
-# ─── Sidebar filters ───
+# ─── Sidebar ───
 st.sidebar.title("🌾 AgriScore KZ")
-st.sidebar.markdown("Скоринг сельхозпроизводителей")
+st.sidebar.caption("Merit-based скоринг сельхозпроизводителей")
 st.sidebar.divider()
 
 oblasts = ["Все"] + sorted(df_scored["oblast"].unique().tolist())
@@ -83,34 +108,41 @@ mask &= df_scored["score"].between(score_range[0], score_range[1])
 
 df_view = df_scored[mask].copy()
 
+
 # ─── Tabs ───
-tab_rank, tab_shortlist, tab_analytics, tab_detail = st.tabs(
-    ["📊 Рейтинг", "📋 Шорт-лист", "📈 Аналитика", "🔍 Детали заявки"]
-)
+tab_rank, tab_shortlist, tab_analytics, tab_detail, tab_whatif, tab_upload = st.tabs([
+    "📊 Рейтинг", "📋 Шорт-лист", "📈 Аналитика",
+    "🔍 Детали", "🎛 What-If", "📤 Загрузка",
+])
+
 
 # ═══════════ TAB 1: Ranking ═══════════
 with tab_rank:
     st.header("Рейтинг заявок")
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Всего заявок", f"{len(df_view):,}")
     c2.metric("Средний балл", f"{df_view['score'].mean():.1f}")
-    c3.metric("Медианный балл", f"{df_view['score'].median():.1f}")
+    c3.metric("ML-компонент", f"{df_view['ml_score'].mean():.1f}")
+    c4.metric("Rule-компонент", f"{df_view['rule_score'].mean():.1f}")
     approved_pct = (df_view["status"].isin({"Исполнена", "Одобрена"})).mean() * 100
-    c4.metric("% одобренных", f"{approved_pct:.1f}%")
+    c5.metric("% одобренных", f"{approved_pct:.1f}%")
 
     show_cols = ["num", "oblast", "district", "direction", "subsidy_name",
-                 "status", "amount", "normative", "animals_count", "score"]
+                 "status", "amount", "normative", "animals_count",
+                 "ml_score", "rule_score", "score"]
     display = df_view[show_cols].sort_values("score", ascending=False).head(500)
     display.columns = [
         "№", "Область", "Район", "Направление", "Тип субсидии",
-        "Статус", "Сумма (₸)", "Норматив", "Кол-во голов", "Балл"
+        "Статус", "Сумма (₸)", "Норматив", "Кол-во голов",
+        "ML балл", "Rule балл", "Итог. балл"
     ]
 
     st.dataframe(
-        display.style.background_gradient(subset=["Балл"], cmap="RdYlGn", vmin=0, vmax=100),
+        display.style.background_gradient(subset=["Итог. балл"], cmap="RdYlGn", vmin=0, vmax=100),
         height=500,
     )
+
 
 # ═══════════ TAB 2: Shortlist ═══════════
 with tab_shortlist:
@@ -119,27 +151,23 @@ with tab_shortlist:
     top_n = st.slider("Количество кандидатов", 10, 200, 50)
     shortlist = df_view.nlargest(top_n, "score")
 
-    st.success(f"Топ-{top_n} заявителей с наивысшим баллом")
+    st.success(f"Топ-{top_n} заявителей с наивысшим баллом (композитный: 60% ML + 40% Rules)")
 
     sl_cols = ["num", "oblast", "district", "direction", "amount",
-               "animals_count", "score"]
+               "animals_count", "ml_score", "rule_score", "score"]
     sl_display = shortlist[sl_cols].copy()
     sl_display.columns = [
         "№", "Область", "Район", "Направление",
-        "Сумма (₸)", "Кол-во голов", "Балл"
+        "Сумма (₸)", "Кол-во голов", "ML балл", "Rule балл", "Итог. балл"
     ]
 
     st.dataframe(
-        sl_display.style.background_gradient(subset=["Балл"], cmap="RdYlGn", vmin=0, vmax=100),
+        sl_display.style.background_gradient(subset=["Итог. балл"], cmap="RdYlGn", vmin=0, vmax=100),
     )
 
     csv = sl_display.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "📥 Скачать шорт-лист (CSV)",
-        csv,
-        "shortlist.csv",
-        "text/csv",
-    )
+    st.download_button("📥 Скачать шорт-лист (CSV)", csv, "shortlist.csv", "text/csv")
+
 
 # ═══════════ TAB 3: Analytics ═══════════
 with tab_analytics:
@@ -161,9 +189,7 @@ with tab_analytics:
         st.subheader("Средний балл по областям")
         avg_by_oblast = (
             df_view.groupby("oblast")["score"]
-            .mean()
-            .sort_values(ascending=True)
-            .reset_index()
+            .mean().sort_values(ascending=True).reset_index()
         )
         fig_bar = px.bar(
             avg_by_oblast, x="score", y="oblast", orientation="h",
@@ -176,11 +202,22 @@ with tab_analytics:
     col_c, col_d = st.columns(2)
 
     with col_c:
+        st.subheader("ML vs Rule-based компоненты")
+        scatter_data = df_view.sample(min(2000, len(df_view)), random_state=42)
+        fig_scatter = px.scatter(
+            scatter_data, x="ml_score", y="rule_score",
+            color="score", color_continuous_scale="RdYlGn",
+            labels={"ml_score": "ML балл", "rule_score": "Rule балл", "score": "Итоговый"},
+            opacity=0.5,
+        )
+        fig_scatter.update_layout(height=350)
+        st.plotly_chart(fig_scatter, key="scatter_ml_rule")
+
+    with col_d:
         st.subheader("По направлениям")
         avg_by_dir = (
             df_view.groupby("direction")["score"]
-            .agg(["mean", "count"])
-            .reset_index()
+            .agg(["mean", "count"]).reset_index()
         )
         avg_by_dir.columns = ["direction", "avg_score", "count"]
         fig_dir = px.bar(
@@ -192,16 +229,23 @@ with tab_analytics:
         fig_dir.update_layout(height=350, coloraxis_showscale=False)
         st.plotly_chart(fig_dir, key="bar_directions")
 
-    with col_d:
-        st.subheader("Статусы заявок")
-        status_counts = df_view["status"].value_counts().reset_index()
-        status_counts.columns = ["status", "count"]
-        fig_pie = px.pie(
-            status_counts, values="count", names="status",
-            color_discrete_sequence=px.colors.qualitative.Set2,
-        )
-        fig_pie.update_layout(height=350)
-        st.plotly_chart(fig_pie, key="pie_statuses")
+    # Feature importance
+    st.subheader("Важность признаков (SHAP)")
+    mean_shap = np.abs(shap_values).mean(axis=0)
+    feat_imp = pd.DataFrame({
+        "feature": FEATURE_COLS,
+        "importance": mean_shap,
+        "name_ru": [FEATURE_NAMES_RU.get(f, f) for f in FEATURE_COLS],
+    }).sort_values("importance", ascending=True).tail(15)
+
+    fig_imp = px.bar(
+        feat_imp, x="importance", y="name_ru", orientation="h",
+        color="importance", color_continuous_scale="Blues",
+        labels={"importance": "Средний |SHAP|", "name_ru": ""},
+    )
+    fig_imp.update_layout(height=400, coloraxis_showscale=False)
+    st.plotly_chart(fig_imp, key="feature_importance")
+
 
 # ═══════════ TAB 4: Detail ═══════════
 with tab_detail:
@@ -227,8 +271,12 @@ with tab_detail:
         with col1:
             score_val = row["score"]
             color = "#22c55e" if score_val >= 70 else "#f59e0b" if score_val >= 40 else "#ef4444"
-            st.markdown(f"### Балл: <span style='color:{color};font-size:2em'>{score_val:.1f}</span>/100",
-                        unsafe_allow_html=True)
+            st.markdown(
+                f"### Балл: <span style='color:{color};font-size:2em'>{score_val:.1f}</span>/100",
+                unsafe_allow_html=True,
+            )
+            st.markdown(f"**ML балл:** {row['ml_score']:.1f} | **Rule балл:** {row['rule_score']:.1f}")
+            st.divider()
             st.markdown(f"**Область:** {row['oblast']}")
             st.markdown(f"**Район:** {row['district']}")
             st.markdown(f"**Направление:** {row['direction']}")
@@ -239,7 +287,7 @@ with tab_detail:
 
         with col2:
             sv = shap_values[pos_in_scored]
-            expl = explain_single(sv, FEATURE_COLS, top_n=10)
+            expl = explain_single(sv, FEATURE_COLS, top_n=12)
 
             names = [e["name_ru"] for e in expl]
             vals = [e["shap_value"] for e in expl]
@@ -250,13 +298,154 @@ with tab_detail:
                 marker_color=colors,
             ))
             fig_shap.update_layout(
-                title="SHAP — вклад факторов в балл",
+                title="SHAP — вклад факторов в ML-балл",
                 xaxis_title="Влияние на балл",
-                height=400,
+                height=450,
                 yaxis=dict(autorange="reversed"),
             )
             st.plotly_chart(fig_shap, key="shap_detail")
 
+        # Rule score breakdown
+        st.subheader("Разбивка Rule-based балла")
+        rule_cols = {
+            "subsidy_type_score": ("Тип субсидии", 30),
+            "normative_score": ("Норматив", 25),
+            "herd_size_score": ("Размер стада", 15),
+            "direction_score": ("Направление", 10),
+            "regional_score": ("Регион", 10),
+            "seasonal_score": ("Сезонность", 10),
+        }
+
+        rule_data = []
+        for col, (name, max_val) in rule_cols.items():
+            val = row.get(col, 0)
+            rule_data.append({"Критерий": name, "Балл": val, "Макс": max_val})
+
+        rule_df = pd.DataFrame(rule_data)
+        fig_rule = go.Figure()
+        fig_rule.add_trace(go.Bar(
+            x=rule_df["Балл"], y=rule_df["Критерий"], orientation="h",
+            marker_color="#3b82f6", name="Балл",
+        ))
+        fig_rule.add_trace(go.Bar(
+            x=rule_df["Макс"] - rule_df["Балл"], y=rule_df["Критерий"], orientation="h",
+            marker_color="#1e293b", name="Остаток",
+        ))
+        fig_rule.update_layout(
+            barmode="stack", height=300, showlegend=False,
+            title="Rule-based компоненты",
+            yaxis=dict(autorange="reversed"),
+        )
+        st.plotly_chart(fig_rule, key="rule_breakdown")
+
         st.subheader("Текстовое объяснение")
-        text = generate_text_explanation(expl, score_val)
+        text = generate_text_explanation(expl, score_val, row["ml_score"], row["rule_score"])
         st.code(text, language=None)
+
+
+# ═══════════ TAB 5: What-If ═══════════
+with tab_whatif:
+    st.header("🎛 What-If симулятор")
+    st.caption("Измените параметры заявки и увидите как изменится балл")
+
+    wc1, wc2 = st.columns(2)
+
+    with wc1:
+        wi_oblast = st.selectbox("Область", sorted(df_scored["oblast"].unique()), key="wi_obl")
+        wi_direction = st.selectbox("Направление", sorted(df_scored["direction"].unique()), key="wi_dir")
+        wi_subsidy = st.selectbox(
+            "Тип субсидии",
+            sorted(df_scored["subsidy_name"].unique()),
+            key="wi_sub",
+        )
+
+    with wc2:
+        wi_normative = st.slider("Норматив (₸/гол)", 20, 400_000, 15_000, step=1000, key="wi_norm")
+        wi_animals = st.slider("Количество голов", 1, 5000, 100, key="wi_anim")
+        wi_month = st.slider("Месяц подачи", 1, 12, 3, key="wi_month")
+
+    wi_amount = wi_normative * wi_animals
+
+    st.markdown(f"**Расчётная сумма:** {wi_amount:,.0f} ₸")
+
+    if st.button("Рассчитать балл", type="primary"):
+        wi_row = pd.DataFrame([{
+            "num": 0, "date": None, "app_number": "whatif",
+            "akimat": "", "status": "Новая", "approved": None,
+            "oblast": wi_oblast, "district": "Неизвестно",
+            "direction": wi_direction, "subsidy_name": wi_subsidy,
+            "normative": wi_normative, "amount": wi_amount,
+            "animals_count": wi_animals,
+            "month": wi_month, "hour": 12, "day_of_year": wi_month * 30,
+        }])
+
+        try:
+            scored_wi, shap_wi, _ = score_applicants(wi_row, models, encoders, oblast_stats)
+            r = scored_wi.iloc[0]
+
+            rc1, rc2, rc3 = st.columns(3)
+            s_color = "#22c55e" if r["score"] >= 70 else "#f59e0b" if r["score"] >= 40 else "#ef4444"
+            rc1.markdown(f"### Итог: <span style='color:{s_color};font-size:1.5em'>{r['score']:.1f}</span>",
+                         unsafe_allow_html=True)
+            rc2.metric("ML балл", f"{r['ml_score']:.1f}")
+            rc3.metric("Rule балл", f"{r['rule_score']:.1f}")
+
+            expl_wi = explain_single(shap_wi[0], FEATURE_COLS, top_n=8)
+            names_wi = [e["name_ru"] for e in expl_wi]
+            vals_wi = [e["shap_value"] for e in expl_wi]
+            colors_wi = ["#22c55e" if v > 0 else "#ef4444" for v in vals_wi]
+
+            fig_wi = go.Figure(go.Bar(x=vals_wi, y=names_wi, orientation="h", marker_color=colors_wi))
+            fig_wi.update_layout(title="SHAP факторы", height=350, yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_wi, key="shap_whatif")
+        except Exception as e:
+            st.error(f"Ошибка: {e}")
+
+
+# ═══════════ TAB 6: Upload ═══════════
+with tab_upload:
+    st.header("📤 Загрузка новых заявок")
+    st.caption("Загрузите CSV с новыми заявками для скоринга")
+
+    st.markdown("""
+    **Формат CSV** (колонки):
+    `oblast, district, direction, subsidy_name, normative, amount, month`
+    """)
+
+    uploaded = st.file_uploader("Загрузить CSV", type=["csv"])
+
+    if uploaded is not None:
+        try:
+            new_df = pd.read_csv(uploaded)
+            st.success(f"Загружено {len(new_df)} заявок")
+
+            # Add missing columns
+            for col in ["num", "date", "app_number", "akimat", "status", "approved",
+                        "hour", "day_of_year", "animals_count"]:
+                if col not in new_df.columns:
+                    new_df[col] = 0 if col != "status" else "Новая"
+
+            if "animals_count" not in new_df.columns or new_df["animals_count"].sum() == 0:
+                new_df["animals_count"] = np.where(
+                    new_df["normative"] > 0,
+                    new_df["amount"] / new_df["normative"],
+                    0,
+                )
+
+            scored_new, _, _ = score_applicants(new_df, models, encoders, oblast_stats)
+
+            show = scored_new[["oblast", "district", "direction", "subsidy_name",
+                               "amount", "normative", "ml_score", "rule_score", "score"]]
+            show = show.sort_values("score", ascending=False)
+            show.columns = ["Область", "Район", "Направление", "Тип субсидии",
+                            "Сумма", "Норматив", "ML балл", "Rule балл", "Итог. балл"]
+
+            st.dataframe(
+                show.style.background_gradient(subset=["Итог. балл"], cmap="RdYlGn", vmin=0, vmax=100)
+            )
+
+            csv_out = show.to_csv(index=False).encode("utf-8-sig")
+            st.download_button("📥 Скачать результат", csv_out, "scored_results.csv", "text/csv")
+
+        except Exception as e:
+            st.error(f"Ошибка при обработке: {e}")
