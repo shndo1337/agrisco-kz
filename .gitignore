@@ -8,3 +8,4 @@ data/processed/
 .env
 .DS_Store
 notebooks/figures/
+reports/

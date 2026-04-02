@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.preprocessing import load_and_clean
 from src.features import FEATURE_COLS, FEATURE_NAMES_RU
 from src.model import load_model, score_applicants, explain_single, generate_text_explanation
+from src.report import generate_shortlist_report
 
 # ─── Page config ───
 st.set_page_config(
@@ -165,8 +166,26 @@ with tab_shortlist:
         sl_display.style.background_gradient(subset=["Итог. балл"], cmap="RdYlGn", vmin=0, vmax=100),
     )
 
-    csv = sl_display.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("📥 Скачать шорт-лист (CSV)", csv, "shortlist.csv", "text/csv")
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        csv = sl_display.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📥 Скачать шорт-лист (CSV)", csv, "shortlist.csv", "text/csv")
+
+    with dl_col2:
+        # PDF-отчёт
+        pdf_df = shortlist[["oblast", "district", "direction", "amount", "score"]].copy()
+        try:
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                generate_shortlist_report(pdf_df, tmp.name)
+                tmp.seek(0)
+                pdf_bytes = open(tmp.name, "rb").read()
+            st.download_button(
+                "📄 Скачать отчёт (PDF)", pdf_bytes,
+                "shortlist_report.pdf", "application/pdf",
+            )
+        except Exception as e:
+            st.warning(f"PDF недоступен: {e}")
 
 
 # ═══════════ TAB 3: Analytics ═══════════
