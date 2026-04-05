@@ -114,12 +114,11 @@ def train(df: pd.DataFrame | None = None, save: bool = True):
 
 
 def _ensemble_predict(models: dict, weights: dict, X: pd.DataFrame) -> np.ndarray:
-    """Weighted ensemble prediction."""
-    proba = np.zeros(len(X))
+    """Weighted ensemble prediction across model dict."""
     total_w = sum(weights.values())
+    proba = np.zeros(len(X))
     for name, model in models.items():
-        w = weights.get(name, 0)
-        proba += model.predict_proba(X)[:, 1] * w
+        proba += model.predict_proba(X)[:, 1] * weights.get(name, 0.0)
     return proba / total_w
 
 

@@ -1,32 +1,77 @@
 """
-AgriScore KZ — FastAPI scoring endpoint v2.
+AgriScore KZ — FastAPI scoring endpoint v3.
 Запуск: uvicorn api.main:app --reload
 """
-from fastapi import FastAPI
-from pydantic import BaseModel
-import pandas as pd
-import numpy as np
+import os
 import sys
+import time
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from fastapi import FastAPI, Depends, HTTPException, Security, Request
+from fastapi.security import APIKeyHeader
+from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.model import load_model, score_applicants, explain_single
-from src.features import FEATURE_COLS
+from src.model import load_model, score_applicants, explain_single  # noqa: E402
+from src.features import FEATURE_COLS  # noqa: E402
 
-app = FastAPI(
-    title="AgriScore KZ API",
-    description="API для merit-based скоринга заявок на субсидии сельхозпроизводителей",
-    version="0.2.0",
+# ─── Logging ───
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
+logger = logging.getLogger("agrisco")
+
+# ─── API Key auth ───
+API_KEY = os.getenv("AGRISCO_API_KEY", "dev-key-123")
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    if api_key is None or api_key != API_KEY:
+        logger.warning("Unauthorized request: invalid or missing API key")
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return api_key
+
 
 models, encoders, oblast_stats = None, None, None
 
 
-@app.on_event("startup")
-def startup():
+def startup() -> None:
+    """Загружает артефакты модели в глобальное состояние."""
     global models, encoders, oblast_stats
+    logger.info("Loading model artifacts...")
     models, encoders, oblast_stats = load_model()
+    logger.info(f"Models loaded: {list(models.keys())}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    startup()
+    yield
+
+
+app = FastAPI(
+    title="AgriScore KZ API",
+    description="API для merit-based скоринга заявок на субсидии сельхозпроизводителей",
+    version="0.3.0",
+    lifespan=lifespan,
+)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration = time.time() - start
+    logger.info(f"{request.method} {request.url.path} → {response.status_code} ({duration:.3f}s)")
+    return response
 
 
 class ApplicantIn(BaseModel):
@@ -49,7 +94,7 @@ class ScoreOut(BaseModel):
 
 
 @app.post("/score", response_model=ScoreOut)
-def score_one(applicant: ApplicantIn):
+def score_one(applicant: ApplicantIn, _: str = Depends(verify_api_key)):
     data = applicant.model_dump()
     data["animals_count"] = data["amount"] / data["normative"] if data["normative"] > 0 else 0
 
@@ -64,6 +109,8 @@ def score_one(applicant: ApplicantIn):
     expl = explain_single(shap_vals[0], FEATURE_COLS, top_n=5)
     r = scored.iloc[0]
 
+    logger.info(f"Scored: oblast={data['oblast']}, score={r['score']:.1f}")
+
     return ScoreOut(
         score=float(r["score"]),
         ml_score=float(r["ml_score"]),
@@ -74,7 +121,7 @@ def score_one(applicant: ApplicantIn):
 
 
 @app.post("/score/batch")
-def score_batch(applicants: list[ApplicantIn]):
+def score_batch(applicants: list[ApplicantIn], _: str = Depends(verify_api_key)):
     rows = []
     for a in applicants:
         d = a.model_dump()
@@ -86,6 +133,8 @@ def score_batch(applicants: list[ApplicantIn]):
 
     df = pd.DataFrame(rows)
     scored, _, _ = score_applicants(df, models, encoders, oblast_stats)
+
+    logger.info(f"Batch scored: {len(applicants)} applicants")
 
     return scored[["oblast", "direction", "amount", "normative",
                     "ml_score", "rule_score", "score"]].to_dict("records")

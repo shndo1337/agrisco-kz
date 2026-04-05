@@ -97,6 +97,33 @@ sel_status = st.sidebar.selectbox("Статус заявки", statuses)
 
 score_range = st.sidebar.slider("Диапазон балла", 0, 100, (0, 100))
 
+# ─── Tech Stack (collapsible) ───
+st.sidebar.divider()
+with st.sidebar.expander("⚙️ О системе"):
+    st.markdown("""
+**ML Pipeline**
+- Ensemble: XGBoost (55%) + LightGBM (45%)
+- 30 engineered features, 5-fold CV
+- ROC-AUC: **0.94**
+- SHAP-объяснения каждой заявки
+
+**Rule Engine (3 НПА)**
+- 9 компонентов из 3 приказов МСХ РК
+- 34 нормы падежа, 18 областей пастбищ
+- Composite: 60% ML + 40% Rules
+
+**Infrastructure**
+- 🐳 Docker + docker-compose
+- 🧪 26 unit tests (pytest)
+- 🔄 CI/CD (GitHub Actions)
+- 🔐 API auth (X-API-Key)
+- 📝 Structured logging
+- 📄 PDF-отчёты (fpdf2)
+
+**API**: `POST /score`, `POST /score/batch`
+""")
+    st.caption("v0.3.0 | Python 3.12")
+
 # Apply filters
 mask = pd.Series(True, index=df_scored.index)
 if sel_oblast != "Все":
@@ -108,6 +135,38 @@ if sel_status != "Все":
 mask &= df_scored["score"].between(score_range[0], score_range[1])
 
 df_view = df_scored[mask].copy()
+
+
+# ─── Onboarding ───
+if "onboarding_dismissed" not in st.session_state:
+    st.session_state.onboarding_dismissed = False
+
+if not st.session_state.onboarding_dismissed:
+    with st.container():
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #1a3a2a 0%, #1a2836 100%);
+                    border: 1px solid #2d5a3c; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px;">
+        <h3 style="color: #64FFDA; margin-top: 0;">Добро пожаловать в AgriScore KZ</h3>
+        <p style="color: #CDD6F4; font-size: 15px; margin-bottom: 12px;">
+        AI-система merit-based скоринга заявок на субсидии. Каждая заявка получает балл от 0 до 100
+        на основе <b>ML-модели</b> (60%) и <b>экспертных правил из 3 НПА МСХ РК</b> (40%).
+        </p>
+        <table style="color: #CDD6F4; font-size: 14px; border-collapse: collapse; width: 100%;">
+        <tr><td style="padding: 4px 12px 4px 0;"><b>📊 Рейтинг</b></td><td>Все заявки с фильтрами по области, направлению, статусу</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><b>📋 Шорт-лист</b></td><td>Топ-N кандидатов для комиссии + экспорт CSV/PDF</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><b>📈 Аналитика</b></td><td>Распределения, SHAP feature importance, сравнение ML vs Rules</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><b>🔍 Детали</b></td><td>SHAP-объяснение конкретной заявки + разбивка Rule-компонентов</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><b>🎛 What-If</b></td><td>Симулятор: измените параметры → увидите как изменится балл</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><b>📤 Загрузка</b></td><td>Загрузите CSV с новыми заявками → получите ранжированный список</td></tr>
+        </table>
+        <p style="color: #8892B0; font-size: 13px; margin-top: 12px; margin-bottom: 0;">
+        Используйте фильтры в боковой панели для навигации. AI помогает принимать решения, но финальное слово — за комиссией.
+        </p>
+        </div>
+        """, unsafe_allow_html=True)
+    if st.button("Понятно, начать работу", type="primary"):
+        st.session_state.onboarding_dismissed = True
+        st.rerun()
 
 
 # ─── Tabs ───
@@ -329,10 +388,13 @@ with tab_detail:
         rule_cols = {
             "subsidy_type_score": ("Тип субсидии", 30),
             "normative_score": ("Норматив", 25),
+            "compliance_score": ("Соответствие НПА", 10),
             "herd_size_score": ("Размер стада", 15),
             "direction_score": ("Направление", 10),
             "regional_score": ("Регион", 10),
             "seasonal_score": ("Сезонность", 10),
+            "mortality_score": ("Устойчивость к падежу", 10),
+            "pasture_score": ("Пастбищная база", 10),
         }
 
         rule_data = []

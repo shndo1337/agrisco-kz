@@ -88,6 +88,14 @@ def _init_pdf() -> AgriReport:
     return pdf
 
 
+def _detect_score_col(df: pd.DataFrame) -> str | None:
+    """Определить, какая колонка содержит итоговый балл."""
+    for candidate in ("score", "composite_score"):
+        if candidate in df.columns:
+            return candidate
+    return None
+
+
 def _draw_summary_block(pdf: AgriReport, df: pd.DataFrame, y: int = 50):
     """Информационный блок с ключевыми метриками."""
     pdf.set_fill_color(*GRAY_BG)
@@ -106,7 +114,7 @@ def _draw_summary_block(pdf: AgriReport, df: pd.DataFrame, y: int = 50):
 
     pdf.set_xy(15, y + 12)
     pdf.set_font("DejaVu", "", 9)
-    score_col = "score" if "score" in df.columns else "composite_score" if "composite_score" in df.columns else None
+    score_col = _detect_score_col(df)
     if score_col:
         avg_score = df[score_col].mean()
         pdf.cell(90, 8, f"Средний балл: {avg_score:.1f}")
@@ -122,8 +130,7 @@ def _draw_summary_block(pdf: AgriReport, df: pd.DataFrame, y: int = 50):
 
 def _draw_table(pdf: AgriReport, df: pd.DataFrame):
     """Таблица с результатами скоринга."""
-    # Определяем колонку скора
-    score_col = "score" if "score" in df.columns else "composite_score" if "composite_score" in df.columns else None
+    score_col = _detect_score_col(df)
 
     has_direction = "direction" in df.columns
     if has_direction:
